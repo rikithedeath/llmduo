@@ -12,7 +12,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         git cmake build-essential ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-RUN git clone --depth 1 --branch ${ZONOS_REF} https://github.com/Zyphra/zonos2.cpp /src
+# ggml e' un sottomodulo: senza --recurse-submodules cmake non trova il suo CMakeLists
+RUN git clone --depth 1 --recurse-submodules --shallow-submodules \
+        --branch ${ZONOS_REF} https://github.com/Zyphra/zonos2.cpp /src
 WORKDIR /src
 RUN cmake -B build -DGGML_CUDA=ON -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_CUDA_ARCHITECTURES="75;80" \
