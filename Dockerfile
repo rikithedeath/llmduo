@@ -16,16 +16,26 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN git clone --depth 1 --recurse-submodules --shallow-submodules \
         --branch ${ZONOS_REF} https://github.com/Zyphra/zonos2.cpp /src
 WORKDIR /src
-RUN cmake -B build -DGGML_CUDA=ON -DCMAKE_BUILD_TYPE=Release \
+# libcuda.so e' del driver e in fase di build non esiste: si linka contro lo stub
+# dell'immagine devel, e a runtime ci pensa il container toolkit a mettere quella vera.
+# -lcuda va messo a mano: la catena cmake di zonos2 non lo aggiunge da sola e ggml-cuda
+# resta con i simboli della Driver API (cuMemMap, cuGetErrorString) irrisolti
+ENV LIBRARY_PATH=/usr/local/cuda/lib64/stubs
+RUN ln -sf /usr/local/cuda/lib64/stubs/libcuda.so /usr/local/cuda/lib64/stubs/libcuda.so.1 \
+    && cmake -B build -DGGML_CUDA=ON -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_CUDA_ARCHITECTURES="75;80" \
+        -DCMAKE_EXE_LINKER_FLAGS="-L/usr/local/cuda/lib64/stubs -lcuda" \
+        -DCMAKE_SHARED_LINKER_FLAGS="-L/usr/local/cuda/lib64/stubs -lcuda" \
     && cmake --build build -j"$(nproc)" --target zonos2-server
 
-# le sue librerie CUDA viaggiano con lui: quelle di llama.cpp restano dove sono
+# zonos2 si porta dietro il SUO ggml, che non e' quello di llama.cpp: le due copie
+# non devono vedersi, per questo stanno in /opt/zonos2/lib e non in un percorso di sistema.
+# cuBLAS e cudart no: l'immagine finale ha gia' le sue (12.8, compatibili all'indietro
+# con il 12.6 con cui qui si compila) e duplicarle costerebbe 600 MB per niente.
 RUN mkdir -p /uscita/lib \
-    && cp build/bin/zonos2-server /uscita/ 2>/dev/null || cp build/zonos2-server /uscita/ \
-    && cp -a /usr/local/cuda/lib64/libcudart.so.12* /uscita/lib/ \
-    && cp -a /usr/local/cuda/lib64/libcublas.so.12* /uscita/lib/ \
-    && cp -a /usr/local/cuda/lib64/libcublasLt.so.12* /uscita/lib/
+    && cp build/zonos2-server /uscita/ \
+    && cp -a build/ggml/src/*.so* /uscita/lib/ \
+    && cp -a build/ggml/src/ggml-cuda/*.so* /uscita/lib/
 
 # --- stage 2: immagine finale -----------------------------------------------------
 FROM ghcr.io/ggml-org/llama.cpp:server-cuda
