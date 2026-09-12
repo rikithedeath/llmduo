@@ -24,6 +24,7 @@ LLAMA = "/app/llama-server"
 ZONOS = "/opt/zonos2/zonos2-server"
 # le librerie CUDA di zonos2 sono sue e non vanno mischiate con quelle di llama.cpp
 ZONOS_LIB = "/opt/zonos2/lib"
+ZONOS_UI = "/opt/zonos2/web/tts_ui.html"
 
 processi = []
 
@@ -81,7 +82,12 @@ def avvia_zonos(slot, modello, porta):
         scarica.da_hf(repo, extra, os.path.join(cartella, extra), var(slot, "REVISIONE"))
     amb = dict(os.environ)
     amb["LD_LIBRARY_PATH"] = ZONOS_LIB + ":" + amb.get("LD_LIBRARY_PATH", "")
-    comando = [ZONOS, modello, "--gpu", "--port", str(porta), "--host", "127.0.0.1"]
+    # zonos2 q4_k non entra in 8 GB di VRAM: su schede piccole si ripiega sulla CPU
+    acceleratore = "--cpu" if (var(slot, "GPU", "si") or "").lower() in ("no", "0", "false") else "--gpu"
+    comando = [ZONOS, modello, acceleratore, "--port", str(porta), "--host", "127.0.0.1"]
+    # il default e' relativo alla cartella di lavoro, che qui non e' quella dei binari
+    if os.path.exists(ZONOS_UI):
+        comando += ["--ui", ZONOS_UI]
     comando += shlex.split(var(slot, "ARGS", ""))
     log(f"slot {slot}: zonos2-server sulla {porta}")
     return subprocess.Popen(comando, env=amb), f"http://127.0.0.1:{porta}/tts/capabilities"

@@ -24,6 +24,7 @@ Due slot, `A` e `B`, ognuno indipendente. Uno solo acceso va benissimo.
 | `A_URL` | in alternativa, URL diretto |
 | `A_REVISIONE` | branch o tag, default `main` |
 | `A_ARGS` | argomenti extra passati al server dello slot |
+| `A_GPU` | `no` per forzare la CPU su quello slot (zonos2); default GPU |
 | `A_LLAMA_ARG_*` | diventa `LLAMA_ARG_*` **solo per quello slot**, così due llama non si pestano |
 | `MODELLO_CONNESSIONI` | quante range-request in parallelo, default 8 |
 | `PORTA` | porta esposta, default 8080 |
