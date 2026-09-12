@@ -25,6 +25,7 @@ ZONOS = "/opt/zonos2/zonos2-server"
 # le librerie CUDA di zonos2 sono sue e non vanno mischiate con quelle di llama.cpp
 ZONOS_LIB = "/opt/zonos2/lib"
 ZONOS_UI = "/opt/zonos2/web/tts_ui.html"
+ZONOS_EMOZIONI = "/opt/zonos2/emotion_directions"
 
 processi = []
 
@@ -88,6 +89,8 @@ def avvia_zonos(slot, modello, porta):
     # il default e' relativo alla cartella di lavoro, che qui non e' quella dei binari
     if os.path.exists(ZONOS_UI):
         comando += ["--ui", ZONOS_UI]
+    if os.path.isdir(ZONOS_EMOZIONI):
+        comando += ["--tts-emotion-directions-dir", ZONOS_EMOZIONI]
     comando += shlex.split(var(slot, "ARGS", ""))
     log(f"slot {slot}: zonos2-server sulla {porta}")
     return subprocess.Popen(comando, env=amb), f"http://127.0.0.1:{porta}/tts/capabilities"
@@ -112,10 +115,13 @@ def aspetta(url, processo, minuti=20):
 def scrivi_nginx(rotte, principale):
     """Una sola porta esposta: /v1/audio e /tts al TTS, tutto il resto all'LLM."""
     blocchi = []
-    for prefisso, porta in rotte:
+    for prefisso, porta, *resto in rotte:
+        # la barra finale in proxy_pass riscrive il percorso: serve a /tts/ui,
+        # che deve arrivare sulla radice del TTS dove sta la sua interfaccia
+        destinazione = resto[0] if resto else ""
         blocchi.append(f"""
         location {prefisso} {{
-            proxy_pass http://127.0.0.1:{porta};
+            proxy_pass http://127.0.0.1:{porta}{destinazione};
             proxy_http_version 1.1;
             proxy_set_header Host $host;
             proxy_buffering off;
@@ -193,7 +199,9 @@ def main():
     rotte, principale = [], None
     for slot, (_, _, tipo, porta) in sonde.items():
         if tipo == "zonos2":
-            rotte += [("/v1/audio/", porta), ("/tts/", porta)]
+            # match esatto: vince su /tts/ senza disturbare le altre rotte
+            rotte += [("/v1/audio/", porta), ("/tts/", porta),
+                      ("= /tts/ui", porta, "/")]
         else:
             principale = porta
     if principale is None:  # solo TTS: prende lui la radice, web UI compresa

@@ -36,7 +36,8 @@ RUN mkdir -p /uscita/lib \
     && cp build/zonos2-server /uscita/ \
     && cp -a build/ggml/src/*.so* /uscita/lib/ \
     && cp -a build/ggml/src/ggml-cuda/*.so* /uscita/lib/ \
-    && cp -a /src/web /uscita/web
+    && cp -a /src/web /uscita/web \
+    && cp -a /src/emotion_directions /uscita/emotion_directions
 
 # --- stage 2: immagine finale -----------------------------------------------------
 FROM ghcr.io/ggml-org/llama.cpp:server-cuda
@@ -52,6 +53,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=zonos /uscita/zonos2-server /opt/zonos2/zonos2-server
 COPY --from=zonos /uscita/lib/ /opt/zonos2/lib/
 COPY --from=zonos /uscita/web/ /opt/zonos2/web/
+COPY --from=zonos /uscita/emotion_directions/ /opt/zonos2/emotion_directions/
 COPY scarica.py avvia.py /app/
 
 # Container Apps impone il non-root e inietta un UID qualunque: tutto cio' che si
