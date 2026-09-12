@@ -26,6 +26,7 @@ ZONOS = "/opt/zonos2/zonos2-server"
 ZONOS_LIB = "/opt/zonos2/lib"
 ZONOS_UI = "/opt/zonos2/web/tts_ui.html"
 ZONOS_EMOZIONI = "/opt/zonos2/emotion_directions"
+HIGGS_DEFAULT = "bosonai/higgs-audio-v3-tts-4b"
 
 processi = []
 
@@ -94,6 +95,16 @@ def avvia_zonos(slot, modello, porta):
     comando += shlex.split(var(slot, "ARGS", ""))
     log(f"slot {slot}: zonos2-server sulla {porta}")
     return subprocess.Popen(comando, env=amb), f"http://127.0.0.1:{porta}/tts/capabilities"
+
+
+def avvia_higgs(slot, porta):
+    """sgl-omni si tira giu' i pesi da solo: questo slot non passa da scarica.py."""
+    modello = var(slot, "MODELLO", HIGGS_DEFAULT)
+    comando = ["sgl-omni", "serve", "--model-path", modello,
+               "--port", str(porta), "--host", "127.0.0.1"]
+    comando += shlex.split(var(slot, "ARGS", ""))
+    log(f"slot {slot}: sgl-omni sulla {porta} con {modello}")
+    return subprocess.Popen(comando, env=dict(os.environ)), f"http://127.0.0.1:{porta}/v1/models"
 
 
 def aspetta(url, processo, minuti=20):
@@ -175,8 +186,8 @@ def main():
         tipo = (var(slot, "TIPO", "") or "").strip().lower()
         if tipo in ("", "off", "no"):
             continue
-        if tipo not in ("llama", "zonos2"):
-            raise SystemExit(f"slot {slot}: tipo '{tipo}' sconosciuto, valgono llama e zonos2")
+        if tipo not in ("llama", "zonos2", "higgs"):
+            raise SystemExit(f"slot {slot}: tipo '{tipo}' sconosciuto, valgono llama, zonos2 e higgs")
         attivi[slot] = tipo
     if not attivi:
         raise SystemExit("nessuno slot acceso: serve almeno A_TIPO")
@@ -184,10 +195,13 @@ def main():
     # i download uno per volta: in parallelo si dividono la banda e non si guadagna niente
     sonde = {}
     for slot, tipo in attivi.items():
-        modello = scarica_modello(slot)
         porta = PORTE_INTERNE[slot]
-        avvio = avvia_llama if tipo == "llama" else avvia_zonos
-        processo, sonda = avvio(slot, modello, porta)
+        if tipo == "higgs":
+            processo, sonda = avvia_higgs(slot, porta)
+        else:
+            modello = scarica_modello(slot)
+            avvio = avvia_llama if tipo == "llama" else avvia_zonos
+            processo, sonda = avvio(slot, modello, porta)
         processi.append(processo)
         sonde[slot] = (processo, sonda, tipo, porta)
 
@@ -202,6 +216,9 @@ def main():
             # match esatto: vince su /tts/ senza disturbare le altre rotte
             rotte += [("/v1/audio/", porta), ("/tts/", porta),
                       ("= /tts/ui", porta, "/")]
+        elif tipo == "higgs":
+            # sgl-omni parla solo OpenAI: niente /tts, niente interfaccia
+            rotte += [("/v1/audio/", porta)]
         else:
             principale = porta
     if principale is None:  # solo TTS: prende lui la radice, web UI compresa

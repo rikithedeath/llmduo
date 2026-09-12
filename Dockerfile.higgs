@@ -1,0 +1,24 @@
+# Higgs Audio v3 al posto di zonos2: stesso container, stessa porta, ma il TTS
+# gira su sglang-omni e quindi vuole PyTorch. Sono diversi giga in piu', per
+# questo sta in un'immagine a parte e non nel Dockerfile principale: cosi'
+# l'immagine di casa resta leggera e la cache di Actions non va in eviction.
+FROM ghcr.io/rikithedeath/llmduo:latest
+
+# l'immagine base finisce come utente 1000: per installare serve tornare root
+USER root
+
+# la toolchain serve solo a costruire cdifflib, che non ha ruote pronte: entra
+# e esce nello stesso strato, altrimenti resterebbe mezzo giga di gcc nell'immagine.
+# --break-system-packages: il python di sistema e' marcato come gestito da apt,
+# ma qui il container e' l'ambiente e non c'e' niente da proteggere
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3-pip python3-dev build-essential \
+    && pip install --break-system-packages --no-cache-dir sglang-omni \
+    && apt-get purge -y python3-dev build-essential \
+    && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY avvia.py /app/avvia.py
+RUN chmod -R a+rX /app
+
+USER 1000:1000
