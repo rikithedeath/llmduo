@@ -2,7 +2,9 @@
 # gira su sglang-omni e quindi vuole PyTorch. Sono diversi giga in piu', per
 # questo sta in un'immagine a parte e non nel Dockerfile principale: cosi'
 # l'immagine di casa resta leggera e la cache di Actions non va in eviction.
-FROM ghcr.io/rikithedeath/llmduo:latest
+# Si parte da `nudo` e non da `latest`: con Higgs lo slot zonos2 non si usa, e
+# sono 400 MB di kernel CUDA piu' ffmpeg che nessuno apre.
+FROM ghcr.io/rikithedeath/llmduo:nudo
 
 # l'immagine base finisce come utente 1000: per installare serve tornare root
 USER root
@@ -12,12 +14,43 @@ USER root
 # Senza gcc e senza gli header di python sgl-omni muore in fase di capture dei
 # CUDA graph con "Failed to find C compiler" -- gia' pagato su Azure.
 # --break-system-packages: il python di sistema e' marcato come gestito da apt,
-# ma qui il container e' l'ambiente e non c'e' niente da proteggere
+# ma qui il container e' l'ambiente e non c'e' niente da proteggere.
+#
+# La potatura sta nella STESSA RUN perche' cancellare in uno strato successivo
+# non restituisce un byte: gli strati sono additivi e il peso resta quello.
+# Cosa se ne va, e perche' (verificato dentro l'immagine, non a intuito):
+#   - mooncake, nixl, deep_ep: trasferimento KV e dispatch MoE fra nodi diversi,
+#     qui c'e' un container solo e sglang li importa dentro try/except
+#   - tokenspeed_triton: nessun file di sglang o sglang_omni lo importa
+#   - tilelang: serve al solo kernel di attenzione DSA di DeepSeek
+#   - gradio, diffusers, modelscope: la webui demo e la generazione di immagini
+#   - pynini + tn, lingua, onnxruntime: normalizzazione testo, riconoscimento
+#     lingua e VAD di ALTRI modelli (CosyVoice, dots_tts, Ming, il realtime).
+#     Higgs non li tocca, e il registro dei modelli tollera gli import falliti
+#   - la copia cu12 di cutlass: qui torch e' cu13
+#   - i .a di xgrammar e cupti: roba da link, a runtime non li apre nessuno.
+#     Attenzione a non fare piazza pulita dei .a: libcudadevrt.a serve alla JIT
+#   - i .pyc (--no-compile): 577 MB, e dist-packages non e' scrivibile dall'UID
+#     che inietta Container Apps, quindi la cache non si riuserebbe comunque
+#   - /tmp/.cache: 25 MB di cache di pip, ma soprattutto una cartella di root
+#     in mezzo a HOME, che impedisce all'UID iniettato di creare la sua
 RUN apt-get update && apt-get install -y --no-install-recommends \
         python3-pip python3-dev build-essential \
-    && pip install --break-system-packages --no-cache-dir \
+    && pip install --break-system-packages --no-cache-dir --no-compile \
         --retries 10 --timeout 120 sglang-omni \
-    && rm -rf /var/lib/apt/lists/*
+    && cd /usr/local/lib/python3.12/dist-packages \
+    && rm -rf mooncake mooncake_transfer_engine_cuda13.libs \
+              nixl_cu13 nixl_cu13.libs nixl_cu13.scripts nixl_ep_cu13 \
+              tokenspeed_triton tilelang deep_ep \
+              gradio gradio_client diffusers modelscope modelscope_hub \
+              pynini pynini.libs _pynini.cpython-312-x86_64-linux-gnu.so tn \
+              lingua onnxruntime \
+    && rm -f nvidia_cutlass_dsl/dsl_packages/cutlass/_mlir/_mlir_libs/_cutlass_ir.cu12*.so \
+             xgrammar/lib/libxgrammar.a \
+             triton/backends/nvidia/lib/cupti/*_static.a \
+    && find /usr/local/lib/python3.12/dist-packages /usr/lib/python3.12 \
+            -name __pycache__ -type d -prune -exec rm -rf {} + \
+    && rm -rf /var/lib/apt/lists/* /tmp/.cache
 
 COPY avvia.py /app/avvia.py
 RUN chmod -R a+rX /app
