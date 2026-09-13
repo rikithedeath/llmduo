@@ -1,8 +1,10 @@
 name: immagine
 
+# Solo a mano: da quando il Dockerfile e' unico, questo job costruirebbe anche
+# lo stage con PyTorch -- dieci minuti di pip e piu' disco di quanto ne abbia un
+# runner. La build vera si fa sulla .35, questo resta per la sola base
+# (`--target base` va aggiunto prima di lanciarlo sul serio).
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 jobs:
