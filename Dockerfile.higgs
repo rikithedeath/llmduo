@@ -1,10 +1,8 @@
-# Higgs Audio v3 al posto di zonos2: stesso container, stessa porta, ma il TTS
+# Higgs Audio v3 come secondo slot: stesso container, stessa porta, ma il TTS
 # gira su sglang-omni e quindi vuole PyTorch. Sono diversi giga in piu', per
 # questo sta in un'immagine a parte e non nel Dockerfile principale: cosi'
-# l'immagine di casa resta leggera e la cache di Actions non va in eviction.
-# Si parte da `nudo` e non da `latest`: con Higgs lo slot zonos2 non si usa, e
-# sono 400 MB di kernel CUDA piu' ffmpeg che nessuno apre.
-FROM ghcr.io/rikithedeath/llmduo:nudo
+# l'immagine base resta leggera e la cache di Actions non va in eviction.
+FROM ghcr.io/rikithedeath/llmduo:latest
 
 # l'immagine base finisce come utente 1000: per installare serve tornare root
 USER root

@@ -3,7 +3,7 @@
 
 Container Apps espone una porta sola per app, e una sidecar non vede la GPU: se si
 vogliono due modelli sulla stessa scheda devono stare qui dentro. Ogni slot dichiara
-il tipo (llama o zonos2), da dove scende il modello e i suoi argomenti; nginx davanti
+il tipo (llama o higgs), da dove scende il modello e i suoi argomenti; nginx davanti
 smista per percorso.
 """
 import os
@@ -21,11 +21,6 @@ MODELLI = "/tmp/modelli"
 PORTA = int(os.environ.get("PORTA", "8080"))
 PORTE_INTERNE = {"A": 8081, "B": 8082}
 LLAMA = "/app/llama-server"
-ZONOS = "/opt/zonos2/zonos2-server"
-# le librerie CUDA di zonos2 sono sue e non vanno mischiate con quelle di llama.cpp
-ZONOS_LIB = "/opt/zonos2/lib"
-ZONOS_UI = "/opt/zonos2/web/tts_ui.html"
-ZONOS_EMOZIONI = "/opt/zonos2/emotion_directions"
 HIGGS_DEFAULT = "bosonai/higgs-audio-v3-tts-4b"
 
 processi = []
@@ -74,27 +69,6 @@ def avvia_llama(slot, modello, porta):
     comando = [LLAMA] + shlex.split(var(slot, "ARGS", ""))
     log(f"slot {slot}: llama-server sulla {porta}")
     return subprocess.Popen(comando, env=amb), f"http://127.0.0.1:{porta}/health"
-
-
-def avvia_zonos(slot, modello, porta):
-    # dac e spk-encoder stanno accanto al backbone: il server li trova da solo
-    cartella = os.path.dirname(modello)
-    repo = var(slot, "REPO", "Zyphra/ZONOS2-GGUF")
-    for extra in ("dac.gguf", "spk-encoder.gguf"):
-        scarica.da_hf(repo, extra, os.path.join(cartella, extra), var(slot, "REVISIONE"))
-    amb = dict(os.environ)
-    amb["LD_LIBRARY_PATH"] = ZONOS_LIB + ":" + amb.get("LD_LIBRARY_PATH", "")
-    # zonos2 q4_k non entra in 8 GB di VRAM: su schede piccole si ripiega sulla CPU
-    acceleratore = "--cpu" if (var(slot, "GPU", "si") or "").lower() in ("no", "0", "false") else "--gpu"
-    comando = [ZONOS, modello, acceleratore, "--port", str(porta), "--host", "127.0.0.1"]
-    # il default e' relativo alla cartella di lavoro, che qui non e' quella dei binari
-    if os.path.exists(ZONOS_UI):
-        comando += ["--ui", ZONOS_UI]
-    if os.path.isdir(ZONOS_EMOZIONI):
-        comando += ["--tts-emotion-directions-dir", ZONOS_EMOZIONI]
-    comando += shlex.split(var(slot, "ARGS", ""))
-    log(f"slot {slot}: zonos2-server sulla {porta}")
-    return subprocess.Popen(comando, env=amb), f"http://127.0.0.1:{porta}/tts/capabilities"
 
 
 def avvia_higgs(slot, porta):
@@ -186,8 +160,8 @@ def main():
         tipo = (var(slot, "TIPO", "") or "").strip().lower()
         if tipo in ("", "off", "no"):
             continue
-        if tipo not in ("llama", "zonos2", "higgs"):
-            raise SystemExit(f"slot {slot}: tipo '{tipo}' sconosciuto, valgono llama, zonos2 e higgs")
+        if tipo not in ("llama", "higgs"):
+            raise SystemExit(f"slot {slot}: tipo '{tipo}' sconosciuto, valgono llama e higgs")
         attivi[slot] = tipo
     if not attivi:
         raise SystemExit("nessuno slot acceso: serve almeno A_TIPO")
@@ -199,9 +173,7 @@ def main():
         if tipo == "higgs":
             processo, sonda = avvia_higgs(slot, porta)
         else:
-            modello = scarica_modello(slot)
-            avvio = avvia_llama if tipo == "llama" else avvia_zonos
-            processo, sonda = avvio(slot, modello, porta)
+            processo, sonda = avvia_llama(slot, scarica_modello(slot), porta)
         processi.append(processo)
         sonde[slot] = (processo, sonda, tipo, porta)
 
@@ -212,11 +184,7 @@ def main():
 
     rotte, principale = [], None
     for slot, (_, _, tipo, porta) in sonde.items():
-        if tipo == "zonos2":
-            # match esatto: vince su /tts/ senza disturbare le altre rotte
-            rotte += [("/v1/audio/", porta), ("/tts/", porta),
-                      ("= /tts/ui", porta, "/")]
-        elif tipo == "higgs":
+        if tipo == "higgs":
             # sgl-omni parla solo OpenAI: niente /tts, niente interfaccia
             rotte += [("/v1/audio/", porta)]
         else:
