@@ -30,6 +30,19 @@ USER root
 #     Attenzione a non fare piazza pulita dei .a: libcudadevrt.a serve alla JIT
 #   - i .pyc (--no-compile): 577 MB, e dist-packages non e' scrivibile dall'UID
 #     che inietta Container Apps, quindi la cache non si riuserebbe comunque
+#   - llvmlite+numba, imageio, z3, nemo_text_processing, silero_vad, s3prl:
+#     ~330 MB che importano solo whisper/librosa, multimodal_gen e i VAD di
+#     altri modelli. nemo_text_processing era gia' rotto, importa il pynini
+#     tolto qui sopra. ATTENZIONE: numba torna obbligatorio se un giorno il
+#     percorso audio di Higgs passa da librosa
+#   - librosa e il suo albero (audioread, soxr, pooch, lazy_loader) piu'
+#     scikit-learn con joblib: 36 MB. librosa lo importano solo utils/audio.py
+#     e i modelli fishaudio/auk/qwen3_tts/video, sklearn NESSUN file di sglang.
+#     Senza numba librosa era gia' monco, qui esce del tutto: i moduli che lo
+#     importano falliscono all'import, e il registro dei modelli lo tollera
+#   - i .dist-info degli undici potati: senza, importlib.metadata continua a
+#     dichiarare installato per esempio gradio, e gli script in /usr/local/bin
+#     puntano nel vuoto
 #   - /tmp/.cache: 25 MB di cache di pip, ma soprattutto una cartella di root
 #     in mezzo a HOME, che impedisce all'UID iniettato di creare la sua
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -43,9 +56,28 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
               gradio gradio_client diffusers modelscope modelscope_hub \
               pynini pynini.libs _pynini.cpython-312-x86_64-linux-gnu.so tn \
               lingua onnxruntime \
+              llvmlite numba numba_cuda imageio imageio_ffmpeg z3 \
+              nemo_text_processing silero_vad s3prl \
+              librosa audioread soxr pooch lazy_loader joblib sklearn \
     && rm -f nvidia_cutlass_dsl/dsl_packages/cutlass/_mlir/_mlir_libs/_cutlass_ir.cu12*.so \
              xgrammar/lib/libxgrammar.a \
              triton/backends/nvidia/lib/cupti/*_static.a \
+    && rm -rf gradio-*.dist-info gradio_client-*.dist-info diffusers-*.dist-info \
+              modelscope-*.dist-info mooncake*.dist-info nixl*.dist-info \
+              deep_ep-*.dist-info tilelang-*.dist-info tokenspeed_triton-*.dist-info \
+              pynini-*.dist-info WeTextProcessing-*.dist-info lingua*.dist-info \
+              onnxruntime-*.dist-info llvmlite-*.dist-info numba-*.dist-info \
+              numba_cuda-*.dist-info imageio-*.dist-info imageio_ffmpeg-*.dist-info \
+              z3_solver-*.dist-info nemo_text_processing-*.dist-info \
+              silero_vad-*.dist-info s3prl-*.dist-info \
+              librosa-*.dist-info audioread-*.dist-info soxr-*.dist-info \
+              pooch-*.dist-info lazy_loader-*.dist-info joblib-*.dist-info \
+              scikit_learn-*.dist-info \
+    && rm -f /usr/local/bin/gradio /usr/local/bin/modelscope /usr/local/bin/diffusers-cli \
+             /usr/local/bin/mooncake_master /usr/local/bin/mooncake_http_metadata_server \
+             /usr/local/bin/nixl_example /usr/local/bin/onnxruntime_test \
+             /usr/local/bin/imageio_download_bin /usr/local/bin/imageio_remove_bin \
+             /usr/local/bin/numba /usr/local/bin/isympy \
     && find /usr/local/lib/python3.12/dist-packages /usr/lib/python3.12 \
             -name __pycache__ -type d -prune -exec rm -rf {} + \
     && rm -rf /var/lib/apt/lists/* /tmp/.cache
