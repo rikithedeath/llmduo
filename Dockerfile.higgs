@@ -22,4 +22,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY avvia.py /app/avvia.py
 RUN chmod -R a+rX /app
 
+# nvcc non va installato: c'e' gia', dentro la ruota nvidia-cuda-nvcc che si tira
+# dietro torch. Solo che la jit di sgl-kernel lo cerca in $CUDA_HOME/bin/nvcc e
+# senza CUDA_HOME quello e' /usr/local/cuda, dove sta il solo runtime: da qui
+# "Ninja build failed / nvcc: not found" alla cattura dei CUDA graph. I due
+# symlink servono al link, che passa da -L$CUDA_HOME/lib64 -lcudart: la ruota
+# mette le librerie in lib/ e non porta il collegamento senza versione.
+ENV CUDA_HOME=/usr/local/lib/python3.12/dist-packages/nvidia/cu13
+RUN ln -sfn lib "$CUDA_HOME/lib64" \
+    && ln -sfn libcudart.so.13 "$CUDA_HOME/lib/libcudart.so"
+
 USER 1000:1000
