@@ -13,6 +13,26 @@ quel qualcosa.
 Nessun PyTorch: sia llama.cpp sia zonos2.cpp sono C++ su ggml e leggono GGUF. L'immagine
 resta intorno ai 3 GB invece dei 10 di uno stack Python, e l'avvio a freddo non ne soffre.
 
+## Le immagini
+
+| tag | cosa c'è | a cosa serve |
+|---|---|---|
+| `:nudo` | llama.cpp + nginx + avviatore | base per chi ci mette sopra un altro motore |
+| `:latest` | `:nudo` + zonos2.cpp + ffmpeg | l'immagine completa, due slot |
+
+La base **non parte dall'immagine di llama.cpp**: quella porta dentro tutto `cuda-libraries-12-8`
+(3,1 GB) più mesa, vulkan e libLLVM, mentre `ldd` sui binari dice che servono solo `libcublas`,
+`libcublasLt` e `libnccl`. Si parte da `nvidia/cuda:base`, si installano quelle tre e si copia `/app`
+dall'immagine ufficiale: 1,7 GB invece di 4,8.
+
+`Dockerfile.higgs` costruisce la variante con [Higgs Audio v3](https://huggingface.co/bosonai/higgs-tts-3-4b)
+al posto di zonos2, che gira su `sglang-omni` e quindi si tira dietro PyTorch. Parte da `:nudo`
+perché lì lo slot zonos2 non si usa, e **pota lo stack di sglang nella stessa `RUN` del `pip
+install`** — cancellare in uno strato successivo non restituisce un byte, gli strati sono additivi.
+Se ne vanno mooncake e nixl (trasferimento KV fra nodi), tilelang, tokenspeed_triton, gradio,
+diffusers e modelscope, più pynini, lingua e onnxruntime che sono la normalizzazione del testo e il
+VAD di *altri* modelli di sglang-omni, non di Higgs: 17,2 GB scompattati diventano 10,6.
+
 ## Gli slot
 
 Due slot, `A` e `B`, ognuno indipendente. Uno solo acceso va benissimo.

@@ -28,6 +28,16 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # la base senza zonos2: e' da qui che parte l'immagine con Higgs
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: nudo
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/llmduo:nudo
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
       - uses: docker/build-push-action@v6
         with:
           context: .
