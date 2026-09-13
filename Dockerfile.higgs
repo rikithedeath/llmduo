@@ -7,15 +7,16 @@ FROM ghcr.io/rikithedeath/llmduo:latest
 # l'immagine base finisce come utente 1000: per installare serve tornare root
 USER root
 
-# la toolchain serve solo a costruire cdifflib, che non ha ruote pronte: entra
-# e esce nello stesso strato, altrimenti resterebbe mezzo giga di gcc nell'immagine.
+# la toolchain resta nell'immagine e non si puo' togliere: triton compila i suoi
+# kernel all'avvio, non alla build, e il launcher che genera include Python.h.
+# Senza gcc e senza gli header di python sgl-omni muore in fase di capture dei
+# CUDA graph con "Failed to find C compiler" -- gia' pagato su Azure.
 # --break-system-packages: il python di sistema e' marcato come gestito da apt,
 # ma qui il container e' l'ambiente e non c'e' niente da proteggere
 RUN apt-get update && apt-get install -y --no-install-recommends \
         python3-pip python3-dev build-essential \
-    && pip install --break-system-packages --no-cache-dir sglang-omni \
-    && apt-get purge -y python3-dev build-essential \
-    && apt-get autoremove -y \
+    && pip install --break-system-packages --no-cache-dir \
+        --retries 10 --timeout 120 sglang-omni \
     && rm -rf /var/lib/apt/lists/*
 
 COPY avvia.py /app/avvia.py
