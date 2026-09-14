@@ -1,75 +1,96 @@
 # llmduo
 
-Due modelli sulla **stessa GPU**, dietro **una porta sola**: `llama.cpp` per il modello di
-linguaggio e [Higgs Audio v3](https://huggingface.co/bosonai/higgs-tts-3-4b) su `sglang-omni`
-per la sintesi vocale.
+Two models on the **same GPU**, behind **a single port**: `llama.cpp` for the language
+model and [Higgs Audio v3](https://huggingface.co/bosonai/higgs-tts-3-4b) on `sglang-omni`
+for speech synthesis.
 
-## Perché esiste
+## Why it exists
 
-Azure Container Apps dà **una GPU per container** — le sidecar non la vedono — ed espone
-**una sola porta** per app. Quindi due modelli che devono condividere una scheda vanno
-messi nello stesso container, con qualcosa davanti che smisti le richieste. Questo è
-quel qualcosa.
+Azure Container Apps gives you **one GPU per container** — sidecars don't see it — and
+exposes **one port** per app. So two models that have to share a card must live in the
+same container, with something in front to route the requests. This is that something.
 
-## Le due immagini
+## The image
 
-| tag | scaricato | su disco | cosa c'è |
+`ghcr.io/rikithedeath/llmduo`, public. **Two tags, no more**, and they are numbered
+(`1.1`, `2.0`…): there is no `:latest`, no `:higgs`, no `:snella`.
+
+| tag | pulled | on disk | what's inside |
 |---|---|---|---|
-| `:latest` | 1,13 GB | 1,75 GB | llama.cpp + nginx + avviatore |
-| `:higgs` | 5,15 GB | 10,6 GB | `:latest` + `sglang-omni` potato |
+| `:1.0` | 5.02 GB | ~10.6 GB | llama.cpp + nginx + pruned sglang-omni — **the one in service** |
+| `:old` | 5.15 GB | — | the previous build, kept **only as a rollback**: point the app at that digest and you're back without rebuilding |
 
-`:latest` **non parte dall'immagine di llama.cpp**: quella porta dentro tutto `cuda-libraries-12-8`
-(3,1 GB) più mesa, vulkan e libLLVM, mentre `ldd` sui binari dice che servono solo `libcublas`,
-`libcublasLt` e `libnccl`. Si parte da `nvidia/cuda:base`, si installano quelle e si copia `/app`
-dall'immagine ufficiale: 1,75 GB invece di 4,8.
+**One `Dockerfile`, two stages.** The `base` stage is llama.cpp with nginx (1.75 GB,
+1.13 GB pulled); the second stage adds the TTS on top. `docker build --target base` gives
+you the base alone. **There is no published base image, and there must not be one again**:
+the TTS stage used to start `FROM` a remote ghcr tag, which is a dependency that can change
+under your feet. Today a build needs **this repo only**, plus the public NVIDIA and ggml-org
+images.
 
-`Dockerfile.higgs` aggiunge il TTS, che gira su `sglang-omni` e quindi si tira dietro PyTorch, e
-**pota lo stack di sglang nella stessa `RUN` del `pip install`** — cancellare in uno strato
-successivo non restituisce un byte, gli strati sono additivi. Se ne vanno mooncake e nixl
-(trasferimento KV fra nodi), tilelang, tokenspeed_triton, gradio, diffusers e modelscope, più
-pynini, lingua e onnxruntime che sono la normalizzazione del testo e il VAD di *altri* modelli di
-sglang-omni, non di Higgs: 17,2 GB scompattati diventano 10,6.
+The base **does not start from the llama.cpp image**: that one drags in the whole of
+`cuda-libraries-12-8` (3.1 GB) plus mesa, vulkan and libLLVM, while `ldd` over every binary
+says only `libcublas`, `libcublasLt` and `libnccl` are needed. Starting from
+`nvidia/cuda:12.8.1-base`, installing those and copying `/app` out of the official image:
+1.75 GB instead of 4.8.
 
-## Gli slot
+The second stage pulls in PyTorch, so it **prunes the sglang stack inside the same `RUN` as
+the `pip install`** — deleting in a later layer doesn't give back a single byte, layers are
+additive. Out go mooncake, nixl and deep_ep (cross-node KV transfer and MoE dispatch),
+tilelang, tokenspeed_triton, gradio, diffusers and modelscope, then pynini, lingua,
+onnxruntime, silero_vad, s3prl and nemo_text_processing — text normalisation and VAD
+belonging to *other* sglang-omni models, not to Higgs — plus llvmlite+numba, librosa with
+its tree and scikit-learn, imageio, z3, the cu12 copy of cutlass and 577 MB of `.pyc`
+(`pip install --no-compile`). Their `.dist-info` directories go too, otherwise
+`importlib.metadata` keeps claiming the packages are installed. 17.2 GB unpacked come down
+to ~10.6.
 
-Due slot, `A` e `B`, ognuno indipendente. Uno solo acceso va benissimo.
+**Where it gets built**: on a local GPU box, not in Actions — the PyTorch stage wants ten
+minutes of `pip` and more disk than a GitHub runner has (13'34" from a cold cache). The
+workflow in `.github/workflows/` is `workflow_dispatch` only and is meant for the base stage.
 
-| variabile | cosa fa |
+## The slots
+
+Two slots, `A` and `B`, each independent. Running just one is fine.
+
+| variable | what it does |
 |---|---|
-| `A_TIPO` / `B_TIPO` | `llama`, `higgs`, oppure vuoto per spegnere lo slot |
-| `A_REPO` / `A_FILE` | repo HuggingFace e nome del file GGUF (le serie `-00001-of-000NN` scendono intere) |
-| `A_URL` | in alternativa, URL diretto |
-| `A_REVISIONE` | branch o tag, default `main` |
-| `A_ARGS` | argomenti extra passati al server dello slot |
-| `A_LLAMA_ARG_*` | diventa `LLAMA_ARG_*` **solo per quello slot**, così due llama non si pestano |
-| `MODELLO_CONNESSIONI` | quante range-request in parallelo, default 8 |
-| `PORTA` | porta esposta, default 8080 |
+| `A_TIPO` / `B_TIPO` | `llama`, `higgs`, or empty to switch the slot off |
+| `A_REPO` / `A_FILE` | HuggingFace repo and GGUF file name (`-00001-of-000NN` series come down whole) |
+| `A_URL` | a direct URL instead |
+| `A_REVISIONE` | branch or tag, defaults to `main` |
+| `A_MODELLO` | for a `higgs` slot, the model to serve |
+| `A_ARGS` | extra arguments passed to that slot's server |
+| `A_LLAMA_ARG_*` | becomes `LLAMA_ARG_*` **for that slot only**, so two llamas don't step on each other |
+| `MODELLO_CONNESSIONI` | parallel range-requests while downloading, defaults to 8 |
+| `MODELLO_PEZZO_MB` / `MODELLO_TENTATIVI` | chunk size (64) and retries per chunk (5) |
+| `HF_TOKEN` | sent as a bearer token, for gated or private repos |
+| `PORTA` | exposed port, defaults to 8080 |
 
-Le `LLAMA_ARG_*` senza prefisso valgono per tutti gli slot `llama`.
+`LLAMA_ARG_*` without a prefix apply to every `llama` slot.
 
-## Le rotte
+## The routes
 
-| percorso | dove va |
+| path | goes to |
 |---|---|
-| `/v1/audio/...` | lo slot `higgs`, se c'è |
-| tutto il resto, `/` compresa | lo slot `llama` |
+| `/v1/audio/...` | the `higgs` slot, if there is one |
+| everything else, `/` included | the `llama` slot |
 
-Con il solo TTS acceso prende lui anche la radice. `sgl-omni` parla solo OpenAI:
-`/v1/audio/speech` per sintetizzare e `/v1/audio/voices` per caricare una voce da clonare.
+With the TTS alone running, it takes the root as well. `sgl-omni` only speaks OpenAI:
+`/v1/audio/speech` to synthesise and `/v1/audio/voices` to upload a voice to clone.
 
-## Esempio
+## Example
 
 ```
 A_TIPO=llama
-A_REPO=mradermacher/Orion-26B-A4B-v1-GGUF
-A_FILE=Orion-26B-A4B-v1.Q5_K_M.gguf
+A_REPO=mradermacher/Goetia-26B-A4B-v1-GGUF
+A_FILE=Goetia-26B-A4B-v1.Q6_K.gguf
 A_ARGS=--reasoning off
-A_LLAMA_ARG_CTX_SIZE=49152
+A_LLAMA_ARG_CTX_SIZE=65536
 A_LLAMA_ARG_N_GPU_LAYERS=999
 A_LLAMA_ARG_FLASH_ATTN=on
 A_LLAMA_ARG_CACHE_TYPE_K=q8_0
 A_LLAMA_ARG_CACHE_TYPE_V=q8_0
-A_LLAMA_ARG_ALIAS=orion-26b-a4b
+A_LLAMA_ARG_ALIAS=goetia-26b-a4b
 
 B_TIPO=higgs
 B_MODELLO=bosonai/higgs-tts-3-4b
@@ -78,27 +99,30 @@ B_ARGS=--tts_engine.engine.mem_fraction_static=0.30
 MODELLO_CONNESSIONI=16
 ```
 
-Su una A100 80 GB ci stanno comodi: un 26B-A4B Q6_K con contesto 64k più Higgs stanno in
-43,8 GB su 81,9. Il tetto di VRAM per `sgl-omni` **non è opzionale**: si alloca una frazione
-della memoria libera quando parte, e senza tetto non lascia niente all'altro slot.
+That fits comfortably on an 80 GB A100: a 26B-A4B at Q6_K with a 64k context plus Higgs
+take 43.8 GB out of 81.9. The VRAM cap on `sgl-omni` **is not optional**: it grabs a
+fraction of whatever is free *when it starts*, both engines start together, and without a
+cap it leaves nothing to the other slot. Revisit the value if the other slot's model grows.
 
-## Il download
+**The models are not in the image**: they are picked through the environment and come down
+from HuggingFace at startup, so changing model is a new revision, not a build.
 
-Il downloader è preso di peso da
-[`llama-server-veloce`](https://github.com/rikithedeath/llama-server-veloce): scarica a
-**connessioni parallele** invece che a una sola, perché il downloader interno di llama.cpp
-ne apre una e basta. Misurato: 11 MB/s contro 95 su Runpod, e 319 MB/s di media verso
-Azure Italy North. I file scendono in `/tmp/modelli/<slot>/`. Lo slot `higgs` non passa di
-qui: `sgl-omni` si tira giù i pesi da solo.
+## The download
 
-## Vincoli rispettati
+The downloader is lifted wholesale from
+[`llama-server-veloce`](https://github.com/rikithedeath/llama-server-veloce): it downloads
+over **parallel connections** instead of one, because llama.cpp's built-in downloader opens
+a single one. Measured: 11 MB/s against 95 on Runpod, and 319 MB/s average into Azure.
+Files land in `/tmp/modelli/<slot>/`. The `higgs` slot doesn't go through this: `sgl-omni`
+fetches its own weights.
 
-- **Non-root**: Container Apps rifiuta i carichi GPU che girano da root e inietta un UID
-  arbitrario. Tutto ciò che si scrive sta in `/tmp`, `HOME` compreso.
-- **La porta si apre alla fine**: nginx parte solo quando entrambi gli slot rispondono,
-  così la startup probe di Container Apps non vede la porta aperta su un modello che sta
-  ancora caricando.
-- **Se un pezzo muore, muore tutto**: meglio far riavviare la replica che servire mezzo
-  servizio.
-- **Niente compilazione CUDA nella build**: i binari di llama.cpp arrivano già fatti
-  dall'immagine ufficiale, e sglang compila i suoi kernel all'avvio.
+## Constraints honoured
+
+- **Non-root**: Container Apps refuses GPU workloads running as root and injects an
+  arbitrary UID. Everything written lives under `/tmp`, `HOME` included.
+- **The port opens last**: nginx only starts once every slot answers, so the Container Apps
+  startup probe never finds an open port in front of a model that is still loading.
+- **If one piece dies, everything dies**: better to let the replica restart than to serve
+  half a service.
+- **No CUDA compilation in the build**: llama.cpp binaries arrive prebuilt from the official
+  image, and sglang compiles its kernels at startup.
