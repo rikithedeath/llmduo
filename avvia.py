@@ -21,7 +21,7 @@ MODELLI = "/tmp/modelli"
 PORTA = int(os.environ.get("PORTA", "8080"))
 PORTE_INTERNE = {"A": 8081, "B": 8082}
 LLAMA = "/app/llama-server"
-HIGGS_DEFAULT = "bosonai/higgs-audio-v3-tts-4b"
+HIGGS_DEFAULT = "bosonai/higgs-tts-3-4b"
 
 processi = []
 
